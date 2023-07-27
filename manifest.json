@@ -1,7 +1,18 @@
 {
-  "name": "XSOverlay Discord Notifications",
+  "id": "win.justcat.XSOverlay-Notifications",
+  "name": "XSOverlay Notifications",
+  "description": "Replugged plugin to send Discord notifications to XSOverlay. (Ported from https://github.com/nitrog0d/XSOverlay-Discord-Notifications)",
+  "author": {
+    "name": "Cat",
+    "discordID": "502553365595684884",
+    "github": "JustCat80"
+  },
   "version": "1.0.0",
-  "description": "Sends Discord notifications to XSOverlay.",
-  "author": "nitro.#0007",
-  "license": "Unlicensed"
+  "updater": {
+    "type": "github",
+    "id": "JustCat80/XSOverlay-Discord-Notifications"
+  },
+  "license": "MIT",
+  "type": "replugged-plugin",
+  "renderer": "src/index.js"
 }

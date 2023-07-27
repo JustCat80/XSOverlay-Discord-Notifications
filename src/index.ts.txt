@@ -1,23 +1,82 @@
-const { Plugin } = require('powercord/entities');
-const { getModule } = require('powercord/webpack');
-const { inject, uninject } = require('powercord/injector');
-const Settings = require('./Settings.jsx');
-const dgram = require('dgram');
+import { Injector, Logger, webpack, settings } from "replugged";
+import dgram from "dgram";
 
-const { getChannel } = getModule([ 'getChannel' ], false);
-const { getGuild } = getModule([ 'getGuild' ], false);
+const inject = new Injector();
+const logger = Logger.plugin("XSOverlay Notifications");
 
-const blurple = '#5865f2';
-const booster = '#ff73fa';
+const blurple = "#5865f2";
+const booster = "#ff73fa";
 
-function sendToXSOverlay (data) {
+interface Settings {
+  notificationTimeout?: number; // 5
+  notificationOpacity?: number; // 0.9
+}
+
+const config = await settings.init<Settings>("win.justcat.XSOverlay-Notifications");
+
+const makeNotifMod = await webpack.waitForModule<{
+  makeTextChatNotification: (channelId: string, msg: unknown, author: unknown) => void;
+}>(webpack.filters.byProps("makeTextChatNotification"));
+
+const getChannelMod = await webpack.waitForModule<{
+  getChannel: (id: string) => {
+    name: string;
+  };
+}>(webpack.filters.byProps("getChannel"));
+
+const getGuildMod = await webpack.waitForModule<{
+  getGuild: (id: string) => {
+    name: string;
+  };
+}>(webpack.filters.byProps("getGuild"));
+
+
+inject.after(makeNotifMod, "makeTextChatNotification", (channel, msg: unknown, author) => {
+  
+  const formattedMessage = formatMessage(msg, author);
+
+  // eslint-disable-next-line @typescript-eslint/no-floating-promises
+  fetch(`https://cdn.discordapp.com/avatars/${author.id}/${author.avatar}.png?size=128`)
+    .then((response) => response.arrayBuffer())
+    .then((buffer) => {
+      const data = JSON.stringify({
+        messageType: 1,
+        index: 0,
+        timeout: config.get("notificationTimeout", 5),
+        height: calculateHeight(clearMessage(formattedMessage)),
+        opacity: config.get("notificationOpacity", 0.9),
+        volume: 0,
+        audioPath: "",
+        title: formatTitle(channel, msg, author),
+        content: formattedMessage,
+        useBase64Icon: true,
+        icon: Buffer.from(buffer).toString("base64"),
+        sourceApp: "XSOverlay-Discord-Notifications",
+      });
+
+      //sendToXSOverlay(data);
+    });
+  });
+
+export async function start(): Promise<void> {
+  
+
+  
+}
+
+export function stop(): void {
+  inject.uninjectAll();
+}
+
+// All the functions from the ported project
+function sendToXSOverlay(data: string): void {
   const server = dgram.createSocket('udp4');
   server.send(data, 42069, '127.0.0.1', () => {
     server.close();
   });
 }
 
-function messageTypeToBoostLevel (type) {
+function messageTypeToBoostLevel(type: number): number {
   switch (type) {
     case 9: return 1;
     case 10: return 2;
@@ -25,7 +84,7 @@ function messageTypeToBoostLevel (type) {
   }
 }
 
-function formatEmotes (content) {
+function formatEmotes(content: string): string {
   const matches = content.match(new RegExp('(<a?:\\w+:\\d+>)', 'g'));
   if (!matches) {
     return content;
@@ -38,7 +97,7 @@ function formatEmotes (content) {
   return content;
 }
 
-function formatChannelMentions (content) {
+function formatChannelMentions(content: string): string {
   const matches = content.match(new RegExp('<(#\\d+)>', 'g'));
   if (!matches) {
     return content;
@@ -53,7 +112,18 @@ function formatChannelMentions (content) {
   return content;
 }
 
-function formatMessage (msg, author) {
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function formatMessage (
+  msg : {
+    type: number, content:string, 
+    mention_roles: unknown[], 
+    embeds: unknown, 
+    attachments: {filename: string}[], 
+    mentions: {username: string, id: string}[]
+    guild_id: string,
+  }, 
+  author: {username: string},
+  ) {
   let temp = msg.content;
 
   switch (msg.type) {
@@ -80,7 +150,7 @@ function formatMessage (msg, author) {
     case 9:
     case 10:
     case 11:
-      return `<b>${author.username}</b> just <b><color=${booster}boosted</color></b> the server! <b>${getGuild(msg.guild_id).name}</b> has achieved <b>Level ${messageTypeToBoostLevel(msg.type)}!</b>`;
+      return `<b>${author.username}</b> just <b><color=${booster}boosted</color></b> the server! <b>${getGuildMod.getGuild(msg.guild_id).name}</b> has achieved <b>Level ${messageTypeToBoostLevel(msg.type)}!</b>`;
     case 12:
       return `<b>${author.username}</b> has added <b>${msg.content}</b> notifications to this channel.`;
     case 14:
@@ -111,7 +181,7 @@ function formatMessage (msg, author) {
   }
 
   if (msg.mention_roles.length > 0) {
-    const { roles } = getGuild(msg.guild_id);
+    const { roles } = getGuildMod.getGuild(msg.guild_id);
     for (const roleId of msg.mention_roles) {
       const role = roles[roleId];
       temp = temp.replace(new RegExp(`<@&${roleId}>`, 'g'), `<b><color=#${parseInt(role.color).toString(16)}>@${role.name}</color></b>`);
@@ -124,11 +194,11 @@ function formatMessage (msg, author) {
   return temp.length !== 0 ? temp : 'Empty';
 }
 
-function clearMessage (content) {
+function clearMessage(content: string): string {
   return content.replace(new RegExp('<[^>]*>', 'g'), '');
 }
 
-function getUserFromRawRecipients (userId, recipients) {
+function getUserFromRawRecipients(userId: string, recipients: {id: string}[]): unknown {
   for (const recipient of recipients) {
     if (recipient.id === userId) {
       return recipient;
@@ -136,7 +206,7 @@ function getUserFromRawRecipients (userId, recipients) {
   }
 }
 
-function formatGroupDmTitle (channel, msg) {
+function formatGroupDmTitle(channel: {name: string, rawRecipients}, msg: {id: string}): unknown {
   if (channel.name !== '') {
     return channel.name;
   }
@@ -179,48 +249,3 @@ function calculateHeight (content) {
   }
   return 250;
 }
-
-module.exports = class XSOverlayDiscordNotifications extends Plugin {
-  async startPlugin () {
-    powercord.api.settings.registerSettings('xsoverlay-discord-notifications-settings', {
-      category: this.entityID,
-      label: 'XSOverlay Discord Notifications',
-      render: Settings
-    });
-
-    const modules = await getModule([ 'makeTextChatNotification' ]);
-
-    inject('xsoverlay-discord-notifications', modules, 'makeTextChatNotification', args => {
-      const [ channel, msg, author ] = args;
-
-      const formattedMessage = formatMessage(msg, author);
-
-      fetch(`https://cdn.discordapp.com/avatars/${author.id}/${author.avatar}.png?size=128`).then(response => response.arrayBuffer()).then(buffer => {
-        const data = JSON.stringify({
-          messageType: 1,
-          index: 0,
-          timeout: parseFloat(this.settings.get('notificationTimeout', 5)),
-          height: calculateHeight(clearMessage(formattedMessage)),
-          opacity: parseFloat(this.settings.get('notificationOpacity', 0.9)),
-          volume: 0,
-          audioPath: '',
-          title: formatTitle(channel, msg, author),
-          content: formattedMessage,
-          useBase64Icon: true,
-          icon: Buffer.from(buffer).toString('base64'),
-          sourceApp: 'XSOverlay-Discord-Notifications'
-        });
-
-        sendToXSOverlay(data);
-      });
-
-      return args;
-    }, true);
-  }
-
-  pluginWillUnload () {
-    uninject('xsoverlay-discord-notifications');
-
-    powercord.api.settings.unregisterSettings('xsoverlay-discord-notifications-settings');
-  }
-};
